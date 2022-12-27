@@ -4,6 +4,7 @@ from PIL import Image
 import torch as torch
 from torch.utils.data import Dataset,DataLoader
 import torchvision.transforms as transforms
+import matplotlib.pyplot as plt
 
 import glob
 import os
@@ -44,8 +45,9 @@ class seg_Dataset(Dataset):
         label_path = self.label_path_list[idx]
         label = np.array(Image.open(label_path))
 
-        # if self.transform is not None:
-        #     image = self.transform(image)
+        if self.transform is not None:
+            image = self.transform(image)
+            label = self.transform(label)
 
         return image, label
     
@@ -53,19 +55,20 @@ if __name__ == "__main__":
     transform = transforms.Compose(
         [
             transforms.ToTensor(),
+            transforms.Resize((512,512)),
         ]
     )
     path = "/Users/gim-yeongmin/Desktop/COVID_lung_CT/manifest-1608266677008"
 
-    dataset = seg_Dataset(path=path, transform=False)
-    dataloader = DataLoader(dataset=dataset,
-                        batch_size=8,
-                        shuffle=True,
-                        drop_last=False)
+    dataset = seg_Dataset(path=path, transform=transform)
+    train_loader = DataLoader(dataset=dataset,
+                        batch_size=1,
+                        shuffle=True)
 
-    for epoch in range(2):
-        print(f"epoch : {epoch} ")
-        for i, batch in enumerate(dataloader):
-            img, label = batch
-            print(label.shape())
-
+images, label = next(iter(train_loader))
+plt.figure(figsize=(8,8))
+plt.subplot(1,2,1)
+plt.imshow(images.numpy().squeeze(),cmap='gray')
+plt.subplot(1,2,2)
+plt.imshow(label.numpy().squeeze(),cmap='gray')
+plt.show()
