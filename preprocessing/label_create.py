@@ -14,15 +14,13 @@ from ast import literal_eval
 anno_dir = "/Users/gim-yeongmin/Desktop/COVID_lung_CT/anno_df.csv"
 anno_df = pd.read_csv(anno_dir,index_col=0)
 
-#sample 3d images
+
 mask_dir = "/Users/gim-yeongmin/Desktop/COVID_lung_CT/manifest-1608266677008/label"
 
 anno_df['data'] = anno_df.apply(lambda x: literal_eval(x.data) , axis = 1)
 
-#meta_axial = pd.read_csv('/Users/gim-yeongmin/Desktop/COVID_lung_CT/COVID_lung_CT/meta_axial.csv')
-metadata = pd.read_csv('/Users/gim-yeongmin/Desktop/COVID_lung_CT/manifest-1608266677008/metadata.csv')
+metadata = pd.read_csv('/Users/gim-yeongmin/Desktop/COVID_lung_CT/manifest-1608266677008/metadata_edit.csv')
 
-#path_values = meta_axial['File Location'].values
 path_values = metadata['File Location'].values
 userPath = '/Users/gim-yeongmin/Desktop/COVID_lung_CT/manifest-1608266677008/'
 

@@ -2,7 +2,7 @@ import pydicom as dcm
 import numpy as np
 from PIL import Image
 import torch as torch
-from torch.utils.data import Dataset,DataLoader
+from torch.utils.data import Dataset,DataLoader, random_split
 import torchvision.transforms as transforms
 import matplotlib.pyplot as plt
 
@@ -44,18 +44,19 @@ class seg_Dataset(Dataset):
         
         label_path = self.label_path_list[idx]
         label = np.array(Image.open(label_path))
+        label_resize = np.expand_dims(label, axis=0)
 
         if self.transform is not None:
             image = self.transform(image)
             label = self.transform(label)
 
-        return image, label
+        return image, label_resize
     
 if __name__ == "__main__":
     transform = transforms.Compose(
         [
             transforms.ToTensor(),
-            transforms.Resize((512,512)),
+            #transforms.Resize((572,572)),
         ]
     )
     path = "/Users/gim-yeongmin/Desktop/COVID_lung_CT/manifest-1608266677008"
@@ -65,10 +66,13 @@ if __name__ == "__main__":
                         batch_size=1,
                         shuffle=True)
 
-images, label = next(iter(train_loader))
-plt.figure(figsize=(8,8))
-plt.subplot(1,2,1)
-plt.imshow(images.numpy().squeeze(),cmap='gray')
-plt.subplot(1,2,2)
-plt.imshow(label.numpy().squeeze(),cmap='gray')
-plt.show()
+    dataset = seg_Dataset(path,transform=transform)
+    n_val = int(len(dataset)*0.004)
+    n_train = len(dataset) - n_val
+    train,val = random_split(dataset,[n_train,n_val])
+    train_loader = DataLoader(train, batch_size=32,shuffle=True)
+    sample = next(iter(train_loader))
+
+    print(type(sample[0]))
+
+    

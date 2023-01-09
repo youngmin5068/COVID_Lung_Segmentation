@@ -6,6 +6,7 @@ import os
 from PIL import Image
 import matplotlib.pyplot as plt
 import shutil
+import SimpleITK as sitk
 
 def vertices_to_boxes(data):
     vertices = data['vertices']
@@ -25,9 +26,6 @@ def vertices_to_boxes(data):
 def load_mask_instance(raw_file,shapes):
     
     rows = shapes[shapes.SOPInstanceUID == raw_file.SOPInstanceUID].reset_index(drop=True)
-
-    if len(rows) < 1 :
-        return 
         
     mask=np.zeros((512, 512), dtype=np.uint8)
     vertic_list = []
@@ -38,12 +36,17 @@ def load_mask_instance(raw_file,shapes):
         cv2.fillPoly(mask_instance, np.int32([vertices]), (255, 255, 255))
         mask[:,:] = mask_instance
         
-    return mask.astype(np.bool)
+    return mask
 
 
 def save_labels(path_values, userPath,anno_df,mask_dir):
     new_dir = "/Users/gim-yeongmin/Desktop/COVID_lung_CT/manifest-1608266677008/"+"label/"
     new_train_dir = "/Users/gim-yeongmin/Desktop/COVID_lung_CT/manifest-1608266677008/"+"train/"
+
+    first = sitk.ReadImage("/Users/gim-yeongmin/Desktop/COVID_lung_CT/manifest-1608266677008/MIDRC-RICORD-1A/MIDRC-RICORD-1A-419639-000082/08-02-2002-NA-CT CHEST WITHOUT CONTRAST-04614/2.000000-ROUTINE CHEST NON-CON-97100/1-080.dcm")
+    ITK_spacing = first.GetSpacing()
+    ITK_origin = first.GetOrigin()
+
     try:
         os.mkdir(new_dir)
         os.mkdir(new_train_dir)
@@ -57,11 +60,23 @@ def save_labels(path_values, userPath,anno_df,mask_dir):
 
         
         for i in range(1, len(image_list)):
+
+            #input image 
+            imgITK = sitk.ReadImage(image_list[i])
+            imgITK.SetOrigin(ITK_origin)
+            imgITK.SetSpacing(ITK_spacing)
+            img_arr = sitk.GetArrayFromImage(imgITK).squeeze()
+            input_img = Image.fromarray(img_arr)
+            plt.imsave(os.path.join(new_train_dir,path[-5:]+"_"+str(i)+".png"),input_img)
+
+            #label image
             img = dcm.dcmread(image_list[i])
             image_mask = img
-            mask = load_mask_instance(image_mask,anno_df)
-            if mask is not None:
-                shutil.move(image_list[i], new_train_dir+path[-5:]+"_"+str(i)+".dcm")
-                mask_2 = Image.fromarray(mask)
-                mask_2.save(os.path.join(new_dir,path[-5:]+"_"+str(i)+"_"+anno_df['labelName'][i]+".png"),'PNG')
+            mask = load_mask_instance(image_mask,anno_df) # numpy
 
+            mask_2 = sitk.GetImageFromArray(mask)
+            mask_2.SetOrigin(ITK_origin)
+            mask_2.SetSpacing(ITK_spacing)
+            mask_2_arr = sitk.GetArrayFromImage(mask_2).squeeze()
+            label_img = Image.fromarray(mask_2_arr)
+            label_img.save(os.path.join(new_dir,path[-5:]+"_"+str(i)+"_"+anno_df['labelName'][i]+".png"),'PNG')
