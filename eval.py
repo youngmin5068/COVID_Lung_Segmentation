@@ -8,8 +8,6 @@ def eval_net(
         net, 
         val_loader, 
         device,
-        epoch,
-        eval_count,
         deep_supervision
             ):
     
@@ -30,7 +28,7 @@ def eval_net(
             else:
                 mask_pred = net(imgs)
         
-        if net.n_classes > 1:
+        if net.num_classes > 1:
             tot += F.cross_entropy(mask_pred, true_masks).item()
         else:
             pred = torch.sigmoid(mask_pred)
