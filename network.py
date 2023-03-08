@@ -4,6 +4,8 @@ import torch.nn.functional as F
 import pydicom as dcm
 import numpy as np
 from init_weights import init_weights
+from torchsummary import summary
+
 class DoubleConv(nn.Module):
     """(convolution => [BN] => ReLU) * 2"""
 
@@ -46,6 +48,7 @@ class Up(nn.Module):
 
         # if bilinear, use the normal convolutions to reduce the number of channels
         if bilinear:
+            print("USE Upsample")
             self.up = nn.Upsample(scale_factor=2, mode='bilinear', align_corners=True)
             self.conv = DoubleConv(in_channels, out_channels, in_channels // 2)
         else:
@@ -74,7 +77,7 @@ class OutConv(nn.Module):
 
 
 class UNet(nn.Module):
-    def __init__(self, input_channels, num_classes, bilinear=False):
+    def __init__(self, input_channels, num_classes, bilinear=True):
         super(UNet, self).__init__()
         self.n_channels = input_channels
         self.num_classes = num_classes
@@ -142,7 +145,7 @@ class NestedUNet(nn.Module):
         super().__init__()
         self.num_classes = num_classes
         self.input_channels = input_channels
-        self.deep_supervision = deep_supervision
+        self.deep_supervision = deep_supervision    
 
         nb_filter = [32, 64, 128, 256, 512]
 
@@ -213,7 +216,6 @@ class NestedUNet(nn.Module):
             #output = self.sigmoid(output)
             return output
 
-
 '''
     UNet 3+
 '''
@@ -260,7 +262,7 @@ class unetConv2(nn.Module):
         # self.h1_PT_hd4_relu = nn.ReLU(inplace=True)
 
 class Encoder2Decoder(nn.Module):
-    def __init__(self, pool_size=2, input_channels=64, output_channels=64, do_pooling=True):
+    def __init__(self, pool_size=None, input_channels=None, output_channels=64, do_pooling=True):
         super(Encoder2Decoder,self).__init__()
         self.pool_size = pool_size
         self.input_channels = input_channels
@@ -336,7 +338,7 @@ class UNet3Plus(nn.Module):
         self.E4_to_D4 = Encoder2Decoder(input_channels=filters[3],output_channels=64,do_pooling=False)
 
         # hd5->32*32, hd4->64*64, Upsample 2 times
-        self.D5_to_D4 = nn.UpsamplingBilinear2d(scale_factor=2)
+        self.D5_to_D4 = nn.Upsample(scale_factor=2,mode="bilinear",align_corners=True)
         self.D5_to_D4_conv = Encoder2Decoder(input_channels=filters[4],output_channels=64,do_pooling=False)
 
         # fusion
@@ -353,11 +355,11 @@ class UNet3Plus(nn.Module):
         self.E3_to_D3 = Encoder2Decoder(input_channels=filters[2],output_channels=64,do_pooling=False)
 
         # hd4->64*64, hd4->128*128, Upsample 2 times
-        self.D4_to_D3 = nn.UpsamplingBilinear2d(scale_factor=2)
+        self.D4_to_D3 = nn.Upsample(scale_factor=2,mode="bilinear",align_corners=True)
         self.D4_to_D3_conv = Encoder2Decoder(input_channels=self.UpChannels,output_channels=64,do_pooling=False)
 
         # hd5->32*32, hd4->128*128, Upsample 4 times
-        self.D5_to_D3 = nn.UpsamplingBilinear2d(scale_factor=4)
+        self.D5_to_D3 = nn.Upsample(scale_factor=4,mode="bilinear",align_corners=True)
         self.D5_to_D3_conv = Encoder2Decoder(input_channels=filters[4],output_channels=64,do_pooling=False)
 
         # fusion(h1_PT_hd3, h2_PT_hd3, h3_Cat_hd3, hd4_UT_hd3, hd5_UT_hd3)
@@ -369,19 +371,19 @@ class UNet3Plus(nn.Module):
         self.E1_to_D2 = Encoder2Decoder(pool_size=2,input_channels=filters[0],output_channels=64)
 
         # h2->160*160, hd2->160*160, Concatenation
-        self.E2_to_D2 = Encoder2Decoder(pool_size=2,input_channels=filters[1],output_channels=64,do_pooling=False)
+        self.E2_to_D2 = Encoder2Decoder(input_channels=filters[1],output_channels=64,do_pooling=False)
 
         # hd3->80*80, hd2->160*160, Upsample 2 times
-        self.D3_to_D2 = nn.Upsample(scale_factor=2, mode='bilinear') 
+        self.D3_to_D2 = nn.Upsample(scale_factor=2,mode="bilinear",align_corners=True) 
         self.D3_to_D2_conv = Encoder2Decoder(input_channels=self.UpChannels,output_channels=64,do_pooling=False)
 
         # hd4->40*40, hd2->160*160, Upsample 4 times
-        self.D4_to_D2 = nn.Upsample(scale_factor=4, mode='bilinear') 
+        self.D4_to_D2 = nn.Upsample(scale_factor=4,mode="bilinear",align_corners=True) 
         self.D4_to_D2_conv = Encoder2Decoder(input_channels=self.UpChannels,output_channels=64,do_pooling=False)
 
 
         # hd5->20*20, hd2->160*160, Upsample 8 times
-        self.D5_to_D2 = nn.Upsample(scale_factor=8, mode='bilinear') 
+        self.D5_to_D2 = nn.Upsample(scale_factor=8,mode="bilinear",align_corners=True) 
         self.D5_to_D2_conv = Encoder2Decoder(input_channels=filters[4],output_channels=64,do_pooling=False)
 
         # fusion(h1_PT_hd2, h2_Cat_hd2, hd3_UT_hd2, hd4_UT_hd2, hd5_UT_hd2)
@@ -389,23 +391,23 @@ class UNet3Plus(nn.Module):
 
         '''stage 1d'''
         # h1->320*320, hd1->320*320, Concatenation
-        self.E1_to_D1 = Encoder2Decoder(pool_size=2,input_channels=filters[0],output_channels=64)
+        self.E1_to_D1 = Encoder2Decoder(input_channels=filters[0],output_channels=64, do_pooling=False)
 
         # hd2->160*160, hd1->320*320, Upsample 2 times
-        self.D2_to_D1 = nn.Upsample(scale_factor=2, mode='bilinear')  
+        self.D2_to_D1 = nn.Upsample(scale_factor=2,mode="bilinear",align_corners=True)  
         self.D2_to_D1_conv = Encoder2Decoder(input_channels=self.UpChannels,output_channels=64,do_pooling=False)
 
         # hd3->80*80, hd1->320*320, Upsample 4 times
-        self.D3_to_D1 = nn.Upsample(scale_factor=4, mode='bilinear')  
+        self.D3_to_D1 = nn.Upsample(scale_factor=4,mode="bilinear",align_corners=True)  
         self.D3_to_D1_conv = Encoder2Decoder(input_channels=self.UpChannels,output_channels=64,do_pooling=False)
 
         # hd4->40*40, hd1->320*320, Upsample 8 times
-        self.D4_to_D1 = nn.Upsample(scale_factor=8, mode='bilinear')  
+        self.D4_to_D1 = nn.Upsample(scale_factor=8,mode="bilinear",align_corners=True)  
         self.D4_to_D1_conv = Encoder2Decoder(input_channels=self.UpChannels,output_channels=64,do_pooling=False)
 
         # hd5->20*20, hd1->320*320, Upsample 16 times
-        self.D2_to_D1 = nn.Upsample(scale_factor=16, mode='bilinear')  # 14*14
-        self.D2_to_D1_conv = Encoder2Decoder(input_channels=filters[4],output_channels=64,do_pooling=False)
+        self.D5_to_D1 = nn.Upsample(scale_factor=16,mode="bilinear",align_corners=True)  # 14*14
+        self.D5_to_D1_conv = Encoder2Decoder(input_channels=filters[4],output_channels=64,do_pooling=False)
 
         # fusion(h1_Cat_hd1, hd2_UT_hd1, hd3_UT_hd1, hd4_UT_hd1, hd5_UT_hd1)
         self.D1_concat = Encoder2Decoder(input_channels=self.UpChannels, output_channels=self.UpChannels,do_pooling=False)
@@ -445,12 +447,17 @@ class UNet3Plus(nn.Module):
         d5_to_d4 = self.D5_to_D4_conv(self.D5_to_D4(d5))
         d4 = self.D4_concat(torch.concat((e1_to_d4,e2_to_d4,e3_to_d4,e4_to_d4,d5_to_d4),1))  # hd4->40*40*UpChannels
 
+        print("d5 shape : ",d5.shape)
+        print("d4 shape : ",d4.shape)
+
         e1_to_d3 = self.E1_to_D3(e1)
         e2_to_d3 = self.E2_to_D3(e2)
         e3_to_d3 = self.E3_to_D3(e3)
         d4_to_d3 = self.D4_to_D3_conv(self.D4_to_D3(d4))
         d5_to_d3 = self.D5_to_D3_conv(self.D5_to_D3(d5))
         d3 = self.D4_concat(torch.concat((e1_to_d3,e2_to_d3,e3_to_d3,d4_to_d3,d5_to_d3),1))
+
+        print("d3 shape : ",d3.shape)
 
 
         e1_to_d2 = self.E1_to_D2(e1)
@@ -460,17 +467,17 @@ class UNet3Plus(nn.Module):
         d5_to_d2 = self.D5_to_D2_conv(self.D5_to_D2(d5))
         d2 = self.D4_concat(torch.concat((e1_to_d2,e2_to_d2,d3_to_d2,d4_to_d2,d5_to_d2),1))
 
+        print("d2 shape : ",d2.shape)
+
         e1_to_d1 = self.E1_to_D1(e1)
         d2_to_d1 = self.D2_to_D1_conv(self.D2_to_D1(d2))
-        d3_to_d1 = self.D3_to_D2_conv(self.D3_to_D2(d3))
-        d4_to_d1 = self.D4_to_D2_conv(self.D4_to_D2(d4))
-        d5_to_d1 = self.D5_to_D2_conv(self.D5_to_D2(d5))
-
-
-        
+        d3_to_d1 = self.D3_to_D1_conv(self.D3_to_D1(d3))
+        d4_to_d1 = self.D4_to_D1_conv(self.D4_to_D1(d4))
+        d5_to_d1 = self.D5_to_D1_conv(self.D5_to_D1(d5))
 
         d1 = self.D4_concat(torch.concat((e1_to_d1,d2_to_d1,d3_to_d1,d4_to_d1,d5_to_d1),1))
         
+        print("d1 shape : ",d1.shape)
       
         d1 = self.outconv1(d1)  
 
@@ -478,3 +485,9 @@ class UNet3Plus(nn.Module):
         return d1
     
 
+if __name__ == '__main__':
+    nested_unet = NestedUNet(num_classes=1,input_channels=1).cuda()
+    unet_3Plus = UNet3Plus(num_classes=1,n_channels=1).cuda()
+
+    print(summary(nested_unet,(1,512,512)))
+    print(summary(unet_3Plus,(1,512,512)))
