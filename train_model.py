@@ -11,6 +11,7 @@ from network import *
 from dataset import *
 from dice_loss import *
 
+
 #os.environ['CUDA_LAUNCH_BLOCKING'] = "1"
 # os.environ["CUDA_VISIBLE_DEVICES"] = "0"
 
@@ -112,7 +113,6 @@ if __name__ == '__main__':
     logging.info(f'Using device {device}')
 
     #net = UNet(input_channels=1,num_classes=1,bilinear=True)
-    
     #net = SEUNet(input_channels=1, num_classes=1, bilinear=True)
     net = NestedUNet(num_classes=1,input_channels=1, deep_supervision=False)
     #net = UNet_3Plus(input_channels=1,num_classes=1)

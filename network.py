@@ -3,7 +3,7 @@ import torch.nn as nn
 import torch.nn.functional as F
 import pydicom as dcm
 import numpy as np
-
+from init_weights import init_weights
 class DoubleConv(nn.Module):
     """(convolution => [BN] => ReLU) * 2"""
 
@@ -212,3 +212,269 @@ class NestedUNet(nn.Module):
             output = self.final(x0_4)
             #output = self.sigmoid(output)
             return output
+
+
+'''
+    UNet 3+
+'''
+#nn.functional.interpolate(x2, scale_factor=2, mode='bilinear', align_corners=True)
+class unetConv2(nn.Module):
+    def __init__(self, in_size, out_size, is_batchnorm, n=2, ks=3, stride=1, padding=1):
+        super(unetConv2, self).__init__()
+        self.n = n
+        self.ks = ks
+        self.stride = stride
+        self.padding = padding
+        s = stride
+        p = padding
+        if is_batchnorm:
+            for i in range(1, n + 1):
+                conv = nn.Sequential(nn.Conv2d(in_size, out_size, ks, s, p),
+                                     nn.BatchNorm2d(out_size),
+                                     nn.ReLU(inplace=True), )
+                setattr(self, 'conv%d' % i, conv)
+                in_size = out_size
+
+        else:
+            for i in range(1, n + 1):
+                conv = nn.Sequential(nn.Conv2d(in_size, out_size, ks, s, p),
+                                     nn.ReLU(inplace=True), )
+                setattr(self, 'conv%d' % i, conv)
+                in_size = out_size
+
+        # initialise the blocks
+        for m in self.children():
+            init_weights(m, init_type='kaiming')
+
+    def forward(self, inputs):
+        x = inputs
+        for i in range(1, self.n + 1):
+            conv = getattr(self, 'conv%d' % i)
+            x = conv(x)
+
+        return x
+
+        # self.E1_to_D4 = nn.MaxPool2d(8, 8, ceil_mode=True)
+        # self.E1_to_D4_conv = nn.Conv2d(filters[0], self.Channel64, 3, padding=1)
+        # self.h1_PT_hd4_bn = nn.BatchNorm2d(self.Channel64)
+        # self.h1_PT_hd4_relu = nn.ReLU(inplace=True)
+
+class Encoder2Decoder(nn.Module):
+    def __init__(self, pool_size=2, input_channels=64, output_channels=64, do_pooling=True):
+        super(Encoder2Decoder,self).__init__()
+        self.pool_size = pool_size
+        self.input_channels = input_channels
+        self.output_channels = output_channels
+        self.do_pooling = do_pooling
+
+        self.maxpool = nn.MaxPool2d(kernel_size=self.pool_size,stride=self.pool_size,ceil_mode=True)
+
+        self.conv2d = nn.Conv2d(self.input_channels,self.output_channels,kernel_size=3,padding=1)
+        self.batchNorm2d = nn.BatchNorm2d(self.output_channels)
+        self.relu = nn.ReLU(inplace=True)
+    
+    def forward(self, x):
+        if self.do_pooling == True:
+            x = self.maxpool(x)
+            x = self.conv2d(x)
+            x = self.batchNorm2d(x)
+        else:
+            x = self.conv2d(x)
+            x = self.batchNorm2d(x)
+
+        output = self.relu(x)
+        
+        return output
+
+     
+
+class UNet3Plus(nn.Module):
+    def __init__(self, n_channels=3, num_classes=1, bilinear=True, feature_scale=4,
+                 is_deconv=True, is_batchnorm=True):
+        super(UNet3Plus, self).__init__()
+        self.n_channels = n_channels
+        self.num_classes = num_classes
+        self.bilinear = bilinear
+        self.feature_scale = feature_scale
+        self.is_deconv = is_deconv
+        self.is_batchnorm = is_batchnorm
+        filters = [64, 128, 256, 512, 1024]
+
+        ## -------------Encoder--------------
+        self.conv1 = unetConv2(self.n_channels, filters[0], self.is_batchnorm) # 1 -> 64 channels
+        self.maxpool1 = nn.MaxPool2d(kernel_size=2) # 512*512 -> 256*256
+
+        self.conv2 = unetConv2(filters[0], filters[1], self.is_batchnorm) # 64 -> 128 channels
+        self.maxpool2 = nn.MaxPool2d(kernel_size=2) # 256*256 -> 128*128
+
+        self.conv3 = unetConv2(filters[1], filters[2], self.is_batchnorm) # 128 -> 256 channels
+        self.maxpool3 = nn.MaxPool2d(kernel_size=2) # 128*128 -> 64*64
+
+        self.conv4 = unetConv2(filters[2], filters[3], self.is_batchnorm) # 256 -> 512 channels
+        self.maxpool4 = nn.MaxPool2d(kernel_size=2) # 64*64 -> 32*32
+
+        self.conv5 = unetConv2(filters[3], filters[4], self.is_batchnorm) # 32*32*512 -> 32*32*1024
+
+        ## -------------Decoder--------------
+        self.Channel64 = filters[0]
+        self.CatBlocks = 5
+        self.UpChannels = self.Channel64 * self.CatBlocks
+
+        '''stage 4d'''
+        #512->256->128->64->32
+
+        # h1->512*512, hd4->64*64, Pooling 8 times
+        self.E1_to_D4 = Encoder2Decoder(pool_size=8,input_channels=filters[0],output_channels=64)
+
+        # h2->256*256, hd4->64*64, Pooling 4 times
+        self.E2_to_D4 = Encoder2Decoder(pool_size=4,input_channels=filters[1],output_channels=64)
+
+        # h3->128*128, hd4->64*64, Pooling 2 times
+        self.E3_to_D4 = Encoder2Decoder(pool_size=2,input_channels=filters[2],output_channels=64)
+
+        # h4-> 64*64, hd4->64*64
+        self.E4_to_D4 = Encoder2Decoder(input_channels=filters[3],output_channels=64,do_pooling=False)
+
+        # hd5->32*32, hd4->64*64, Upsample 2 times
+        self.D5_to_D4 = nn.UpsamplingBilinear2d(scale_factor=2)
+        self.D5_to_D4_conv = Encoder2Decoder(input_channels=filters[4],output_channels=64,do_pooling=False)
+
+        # fusion
+        self.D4_concat = Encoder2Decoder(input_channels=self.UpChannels, output_channels=self.UpChannels,do_pooling=False)
+
+        '''stage 3d'''
+        # h1->512*512, hd3->128*128, Pooling 4 times
+        self.E1_to_D3 = Encoder2Decoder(pool_size=4,input_channels=filters[0],output_channels=64)
+
+        # h2->256*256, hd3->128*128, Pooling 2 times
+        self.E2_to_D3 = Encoder2Decoder(pool_size=2,input_channels=filters[1],output_channels=64)
+
+        # h3->128*128, hd3->128*128, Concatenation
+        self.E3_to_D3 = Encoder2Decoder(input_channels=filters[2],output_channels=64,do_pooling=False)
+
+        # hd4->64*64, hd4->128*128, Upsample 2 times
+        self.D4_to_D3 = nn.UpsamplingBilinear2d(scale_factor=2)
+        self.D4_to_D3_conv = Encoder2Decoder(input_channels=self.UpChannels,output_channels=64,do_pooling=False)
+
+        # hd5->32*32, hd4->128*128, Upsample 4 times
+        self.D5_to_D3 = nn.UpsamplingBilinear2d(scale_factor=4)
+        self.D5_to_D3_conv = Encoder2Decoder(input_channels=filters[4],output_channels=64,do_pooling=False)
+
+        # fusion(h1_PT_hd3, h2_PT_hd3, h3_Cat_hd3, hd4_UT_hd3, hd5_UT_hd3)
+        self.D3_concat = Encoder2Decoder(input_channels=self.UpChannels, output_channels=self.UpChannels,do_pooling=False)
+
+
+        '''stage 2d '''
+        # h1->512*512, hd2->256*256, Pooling 2 times
+        self.E1_to_D2 = Encoder2Decoder(pool_size=2,input_channels=filters[0],output_channels=64)
+
+        # h2->160*160, hd2->160*160, Concatenation
+        self.E2_to_D2 = Encoder2Decoder(pool_size=2,input_channels=filters[1],output_channels=64,do_pooling=False)
+
+        # hd3->80*80, hd2->160*160, Upsample 2 times
+        self.D3_to_D2 = nn.Upsample(scale_factor=2, mode='bilinear') 
+        self.D3_to_D2_conv = Encoder2Decoder(input_channels=self.UpChannels,output_channels=64,do_pooling=False)
+
+        # hd4->40*40, hd2->160*160, Upsample 4 times
+        self.D4_to_D2 = nn.Upsample(scale_factor=4, mode='bilinear') 
+        self.D4_to_D2_conv = Encoder2Decoder(input_channels=self.UpChannels,output_channels=64,do_pooling=False)
+
+
+        # hd5->20*20, hd2->160*160, Upsample 8 times
+        self.D5_to_D2 = nn.Upsample(scale_factor=8, mode='bilinear') 
+        self.D5_to_D2_conv = Encoder2Decoder(input_channels=filters[4],output_channels=64,do_pooling=False)
+
+        # fusion(h1_PT_hd2, h2_Cat_hd2, hd3_UT_hd2, hd4_UT_hd2, hd5_UT_hd2)
+        self.D2_concat = Encoder2Decoder(input_channels=self.UpChannels, output_channels=self.UpChannels,do_pooling=False)
+
+        '''stage 1d'''
+        # h1->320*320, hd1->320*320, Concatenation
+        self.E1_to_D1 = Encoder2Decoder(pool_size=2,input_channels=filters[0],output_channels=64)
+
+        # hd2->160*160, hd1->320*320, Upsample 2 times
+        self.D2_to_D1 = nn.Upsample(scale_factor=2, mode='bilinear')  
+        self.D2_to_D1_conv = Encoder2Decoder(input_channels=self.UpChannels,output_channels=64,do_pooling=False)
+
+        # hd3->80*80, hd1->320*320, Upsample 4 times
+        self.D3_to_D1 = nn.Upsample(scale_factor=4, mode='bilinear')  
+        self.D3_to_D1_conv = Encoder2Decoder(input_channels=self.UpChannels,output_channels=64,do_pooling=False)
+
+        # hd4->40*40, hd1->320*320, Upsample 8 times
+        self.D4_to_D1 = nn.Upsample(scale_factor=8, mode='bilinear')  
+        self.D4_to_D1_conv = Encoder2Decoder(input_channels=self.UpChannels,output_channels=64,do_pooling=False)
+
+        # hd5->20*20, hd1->320*320, Upsample 16 times
+        self.D2_to_D1 = nn.Upsample(scale_factor=16, mode='bilinear')  # 14*14
+        self.D2_to_D1_conv = Encoder2Decoder(input_channels=filters[4],output_channels=64,do_pooling=False)
+
+        # fusion(h1_Cat_hd1, hd2_UT_hd1, hd3_UT_hd1, hd4_UT_hd1, hd5_UT_hd1)
+        self.D1_concat = Encoder2Decoder(input_channels=self.UpChannels, output_channels=self.UpChannels,do_pooling=False)
+
+        # output
+        self.outconv1 = nn.Conv2d(self.UpChannels, num_classes, 3, padding=1)
+
+        # initialise weights
+        for m in self.modules():
+            if isinstance(m, nn.Conv2d):
+                init_weights(m, init_type='kaiming')
+            elif isinstance(m, nn.BatchNorm2d):
+                init_weights(m, init_type='kaiming')
+
+
+    def forward(self, inputs):
+        ## -------------Encoder-------------
+        e1 = self.conv1(inputs)  # h1->512*512*64
+
+        e2 = self.maxpool1(e1)
+        e2 = self.conv2(e2)  # h2->160*160*128
+        e3 = self.maxpool2(e2)
+        e3 = self.conv3(e3)  # h3->80*80*256
+
+        e4 = self.maxpool3(e3)
+        e4 = self.conv4(e4)  # h4->40*40*512
+
+        e5 = self.maxpool4(e4)
+        d5 = self.conv5(e5)  # h5->20*20*1024
+
+  
+        ## -------------Decoder-------------
+        e1_to_d4 = self.E1_to_D4(e1)
+        e2_to_d4 = self.E2_to_D4(e2)
+        e3_to_d4 = self.E3_to_D4(e3)
+        e4_to_d4 = self.E4_to_D4(e4)
+        d5_to_d4 = self.D5_to_D4_conv(self.D5_to_D4(d5))
+        d4 = self.D4_concat(torch.concat((e1_to_d4,e2_to_d4,e3_to_d4,e4_to_d4,d5_to_d4),1))  # hd4->40*40*UpChannels
+
+        e1_to_d3 = self.E1_to_D3(e1)
+        e2_to_d3 = self.E2_to_D3(e2)
+        e3_to_d3 = self.E3_to_D3(e3)
+        d4_to_d3 = self.D4_to_D3_conv(self.D4_to_D3(d4))
+        d5_to_d3 = self.D5_to_D3_conv(self.D5_to_D3(d5))
+        d3 = self.D4_concat(torch.concat((e1_to_d3,e2_to_d3,e3_to_d3,d4_to_d3,d5_to_d3),1))
+
+
+        e1_to_d2 = self.E1_to_D2(e1)
+        e2_to_d2 = self.E2_to_D2(e2)
+        d3_to_d2 = self.D3_to_D2_conv(self.D3_to_D2(d3))
+        d4_to_d2 = self.D4_to_D2_conv(self.D4_to_D2(d4))
+        d5_to_d2 = self.D5_to_D2_conv(self.D5_to_D2(d5))
+        d2 = self.D4_concat(torch.concat((e1_to_d2,e2_to_d2,d3_to_d2,d4_to_d2,d5_to_d2),1))
+
+        e1_to_d1 = self.E1_to_D1(e1)
+        d2_to_d1 = self.D2_to_D1_conv(self.D2_to_D1(d2))
+        d3_to_d1 = self.D3_to_D2_conv(self.D3_to_D2(d3))
+        d4_to_d1 = self.D4_to_D2_conv(self.D4_to_D2(d4))
+        d5_to_d1 = self.D5_to_D2_conv(self.D5_to_D2(d5))
+
+
+        
+
+        d1 = self.D4_concat(torch.concat((e1_to_d1,d2_to_d1,d3_to_d1,d4_to_d1,d5_to_d1),1))
+        
+      
+        d1 = self.outconv1(d1)  
+
+
+        return d1
+    
+
