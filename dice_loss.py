@@ -4,61 +4,17 @@ from torch.autograd import Function
 import torch.nn.functional as F
 from sklearn.metrics import f1_score
 
-class DiceCoeff(Function):
+def dice_coefficient(inputs, targets):
 
-    def forward(self, input, target):
-        self.save_for_backward(input, target)
-        eps = 0.0001
-        self.inter = torch.dot(input.view(-1), target.view(-1))
-        self.union = torch.sum(input) + torch.sum(target) + eps
+    intersection = (inputs * targets).sum()   
+    union = inputs.sum() + targets.sum()
 
-        t = (2 * self.inter.float() + eps) / self.union.float()
-        return t
-
-    def backward(self, grad_output):
-
-        input, target = self.saved_variables
-        grad_input = grad_target = None
-
-        if self.needs_input_grad[0]:
-            grad_input = grad_output * 2 * (target * self.union - self.inter) \
-                         / (self.union * self.union)
-        if self.needs_input_grad[1]:
-            grad_target = None
-
-        return grad_input, grad_target
-
-def dice_coeff(input, target):
-
-    if input.is_cuda:
-        s = torch.FloatTensor(1).cuda().zero_()
+    if intersection == 0 and union == 0:
+        dice = 1.0
     else:
-        s = torch.FloatTensor(1).zero_()
+        dice = (2. * intersection.item()+1e-8) / (union.item() + 1e-8)
 
-    for i, c in enumerate(zip(input, target)):
-        s = s + DiceCoeff().forward(c[0], c[1])
-
-    return s / (i + 1)
-
-
-class DiceLoss(nn.Module):
-    def __init__(self, weight=None, size_average=True):
-        super(DiceLoss, self).__init__()
-
-    def forward(self, inputs, targets, smooth=1):
-        # inputs = F.sigmoid(inputs)
-        # print(inputs[0])
-        # print(torch.max(inputs[0]))
-        # print(torch.min(inputs[0]))
-
-        inputs = inputs.contiguous().view(-1)
-        targets = targets.contiguous().view(-1)
-
-        intersection = (inputs * targets).sum()
-        A_sum = torch.sum(inputs * inputs)
-        B_sum = torch.sum(targets * targets)
-
-        return 1 - ((2. * intersection + smooth) / (A_sum + B_sum + smooth))
+    return dice
 
 
 class DiceBCELoss(nn.Module):
